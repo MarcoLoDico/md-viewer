@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+"""Serve a folder of Markdown files in the browser.
+
+Usage:
+    ./mdview
+    ./mdview /path/to/notes
+    ./mdview --port 8765 ~/notes
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import mimetypes
+import os
+import subprocess
+import sys
+import threading
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse
+
+APP_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = Path.home() / ".mdview.json"
+MARKDOWN_SUFFIXES = {".md", ".markdown"}
+SKIP_DIR_NAMES = {".git", "node_modules", ".venv", "venv", "__pycache__"}
+DEFAULT_PORT = 8765
+
+
+def load_config() -> dict[str, Any]:
+    if not CONFIG_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_last_directory(directory: Path) -> None:
+    config = load_config()
+    config["last_directory"] = str(directory)
+    CONFIG_PATH.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+
+
+def resolve_directory(explicit: str | None) -> Path | None:
+    if explicit:
+        directory = Path(explicit).expanduser().resolve()
+        if not directory.is_dir():
+            raise SystemExit(f"Directory not found: {directory}")
+        save_last_directory(directory)
+        return directory
+
+    saved = load_config().get("last_directory")
+    if not saved or not isinstance(saved, str):
+        return None
+
+    directory = Path(saved).expanduser().resolve()
+    if not directory.is_dir():
+        return None
+    return directory
+
+
+def is_markdown_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in MARKDOWN_SUFFIXES
+
+
+def list_markdown_files(root: Path) -> list[dict[str, str]]:
+    files: list[dict[str, str]] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name not in SKIP_DIR_NAMES and not name.startswith(".")
+        ]
+        current = Path(dirpath)
+        for filename in filenames:
+            path = current / filename
+            if not is_markdown_file(path):
+                continue
+            relative = path.relative_to(root).as_posix()
+            files.append(
+                {
+                    "name": path.name,
+                    "path": relative,
+                }
+            )
+    files.sort(key=lambda item: item["path"].lower())
+    return files
+
+
+def resolve_markdown_path(root: Path, relative_path: str) -> Path:
+    if not relative_path:
+        raise ValueError("Missing path")
+    candidate = (root / Path(relative_path)).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError as error:
+        raise ValueError("Path is outside the selected folder") from error
+    if not is_markdown_file(candidate):
+        raise ValueError("Not a markdown file")
+    return candidate
+
+
+def pick_folder_native() -> Path | None:
+    if sys.platform == "darwin":
+        result = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'POSIX path of (choose folder with prompt "Choose a folder of Markdown files")',
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        return Path(result.stdout.strip()).expanduser().resolve()
+
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        raise RuntimeError("No folder picker is available on this system.") from None
+
+    root = tk.Tk()
+    root.withdraw()
+    root.wm_attributes("-topmost", 1)
+    selected = filedialog.askdirectory(title="Choose a folder of Markdown files")
+    root.destroy()
+    if not selected:
+        return None
+    return Path(selected).expanduser().resolve()
+
+
+class AppState:
+    def __init__(self, root: Path | None) -> None:
+        self._lock = threading.Lock()
+        self._picker_lock = threading.Lock()
+        self._root = root
+
+    def get_root(self) -> Path | None:
+        with self._lock:
+            return self._root
+
+    def set_root(self, root: Path) -> None:
+        with self._lock:
+            self._root = root
+        save_last_directory(root)
+
+    def pick_folder(self) -> Path | None:
+        if not self._picker_lock.acquire(blocking=False):
+            raise RuntimeError("A folder picker is already open.")
+        try:
+            selected = pick_folder_native()
+            if selected is None:
+                return None
+            if not selected.is_dir():
+                raise RuntimeError(f"Directory not found: {selected}")
+            self.set_root(selected)
+            return selected
+        finally:
+            self._picker_lock.release()
+
+
+class ViewerHandler(BaseHTTPRequestHandler):
+    state: AppState
+
+    def log_message(self, format: str, *args: object) -> None:
+        sys.stderr.write("%s - %s\n" % (self.address_string(), format % args))
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        route = parsed.path
+        root = self.state.get_root()
+
+        if route == "/api/status":
+            files = list_markdown_files(root) if root is not None else []
+            self._send_json(
+                {
+                    "directory": str(root) if root is not None else None,
+                    "count": len(files),
+                    "needsFolder": root is None,
+                }
+            )
+            return
+
+        if route == "/api/files":
+            if root is None:
+                self._send_json({"files": []})
+                return
+            self._send_json({"files": list_markdown_files(root)})
+            return
+
+        if route == "/api/file":
+            if root is None:
+                self._send_json({"error": "No folder selected"}, status=400)
+                return
+            query = parse_qs(parsed.query)
+            relative = unquote(query.get("path", [""])[0])
+            try:
+                path = resolve_markdown_path(root, relative)
+                content = path.read_text(encoding="utf-8")
+            except ValueError as error:
+                self._send_json({"error": str(error)}, status=400)
+                return
+            except OSError as error:
+                self._send_json({"error": str(error)}, status=404)
+                return
+            self._send_json({"path": relative, "name": path.name, "content": content})
+            return
+
+        if route in {"/", "/index.html"}:
+            self._send_file(APP_DIR / "index.html", "text/html; charset=utf-8")
+            return
+
+        static_files = {
+            "/favicon.ico": (APP_DIR / "favicon.ico", "image/x-icon"),
+            "/favicon-32.png": (APP_DIR / "favicon-32.png", "image/png"),
+            "/apple-touch-icon.png": (APP_DIR / "apple-touch-icon.png", "image/png"),
+        }
+        static = static_files.get(route)
+        if static is not None:
+            path, content_type = static
+            self._send_file(path, content_type, cache_control="no-cache")
+            return
+
+        self.send_error(404, "Not found")
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/pick-folder":
+            self.send_error(404, "Not found")
+            return
+
+        try:
+            selected = self.state.pick_folder()
+        except RuntimeError as error:
+            self._send_json({"error": str(error)}, status=409)
+            return
+
+        if selected is None:
+            self._send_json({"cancelled": True, "directory": None})
+            return
+
+        files = list_markdown_files(selected)
+        self._send_json(
+            {
+                "cancelled": False,
+                "directory": str(selected),
+                "count": len(files),
+            }
+        )
+
+    def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_file(
+        self,
+        path: Path,
+        content_type: str | None = None,
+        cache_control: str = "no-store",
+    ) -> None:
+        if not path.is_file():
+            self.send_error(404, "Not found")
+            return
+        data = path.read_bytes()
+        guessed, _ = mimetypes.guess_type(path.name)
+        self.send_response(200)
+        self.send_header("Content-Type", content_type or guessed or "application/octet-stream")
+        self.send_header("Cache-Control", cache_control)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+def make_handler(state: AppState) -> type[ViewerHandler]:
+    class BoundHandler(ViewerHandler):
+        pass
+
+    BoundHandler.state = state
+    return BoundHandler
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Open a local Markdown viewer for a folder of .md files."
+    )
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        help="Folder to open. Defaults to the last folder you opened.",
+    )
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to serve on.")
+    parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="Do not open a browser window.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    root = resolve_directory(args.directory)
+    state = AppState(root)
+    handler = make_handler(state)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
+    url = f"http://127.0.0.1:{args.port}"
+
+    if root is None:
+        print("No folder remembered yet. Pick one in the browser.", flush=True)
+    else:
+        file_count = len(list_markdown_files(root))
+        print(f"Serving {root}", flush=True)
+        print(f"{file_count} markdown file(s)", flush=True)
+
+    print(f"Open {url}", flush=True)
+    print("Press Ctrl+C to stop.", flush=True)
+
+    if not args.no_open:
+        threading.Timer(0.4, lambda: webbrowser.open(url)).start()
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

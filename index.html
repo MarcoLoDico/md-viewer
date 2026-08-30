@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MD Viewer</title>
+    <link rel="icon" href="/favicon.ico?v=2" sizes="32x32">
+    <link rel="icon" type="image/png" href="/favicon-32.png?v=2" sizes="32x32">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
+
+    <script>
+        (() => {
+            const saved = localStorage.getItem("mdview-theme");
+            const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+            const isDark = saved === "dark" || (saved !== "light" && prefersDark);
+            document.documentElement.classList.toggle("dark", isDark);
+        })();
+    </script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+
+    <style>
+        .scroller::-webkit-scrollbar { width: 6px; }
+        .scroller::-webkit-scrollbar-track { background: #f1f5f9; }
+        .scroller::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .scroller::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        html.dark .scroller::-webkit-scrollbar-track { background: #0f172a; }
+        html.dark .scroller::-webkit-scrollbar-thumb { background: #334155; }
+        html.dark .scroller::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        .markdown-body h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 1rem; color: #1e293b; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem; }
+        .markdown-body h2 { font-size: 2rem; font-weight: 600; margin-top: 2rem; margin-bottom: 1rem; color: #334155; }
+        .markdown-body h3 { font-size: 1.5rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; color: #334155; }
+        .markdown-body p { line-height: 1.75; color: #475569; margin-bottom: 1.25rem; }
+        .markdown-body :not(pre) > code { background-color: #f1f5f9; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; color: #e11d48; }
+        .markdown-body pre {
+            background-color: #282c34 !important;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            overflow-x: auto;
+            padding: 1rem;
+        }
+        .markdown-body pre code {
+            display: block;
+            background: transparent !important;
+            padding: 0;
+            border-radius: 0;
+            text-shadow: none;
+        }
+        .markdown-body pre code .token {
+            background: transparent !important;
+        }
+        .markdown-body ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 1.25rem; color: #475569; }
+        .markdown-body ol { list-style-type: decimal; padding-left: 1.5rem; margin-bottom: 1.25rem; color: #475569; }
+        .markdown-body blockquote { border-left: 4px solid #cbd5e1; padding: 0.5rem 1rem; color: #64748b; font-style: italic; margin-bottom: 1.25rem; background: #f8fafc; }
+        .markdown-body a { color: #2563eb; text-decoration: underline; }
+
+        html.dark .markdown-body h1 { color: #f1f5f9; border-bottom-color: #1e293b; }
+        html.dark .markdown-body h2,
+        html.dark .markdown-body h3 { color: #e2e8f0; }
+        html.dark .markdown-body p,
+        html.dark .markdown-body ul,
+        html.dark .markdown-body ol { color: #cbd5e1; }
+        html.dark .markdown-body :not(pre) > code { background-color: #1e293b; color: #fb7185; }
+        html.dark .markdown-body pre code {
+            background: transparent !important;
+            color: inherit;
+        }
+        html.dark .markdown-body blockquote { border-left-color: #334155; color: #94a3b8; background: #0f172a; }
+        html.dark .markdown-body a { color: #818cf8; }
+
+        .file-item {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            text-align: left;
+            font-size: 0.875rem;
+            transition: background-color 150ms ease;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #334155;
+        }
+        .file-item:hover { background-color: #eef2ff; }
+        .file-item-active {
+            background-color: #e0e7ff;
+            color: #4338ca;
+            font-weight: 700;
+        }
+        .file-item-active:hover { background-color: #e0e7ff; }
+        html.dark .file-item { color: #cbd5e1; }
+        html.dark .file-item:hover { background-color: #1e293b; }
+        html.dark .file-item-active {
+            background-color: #1e1b4b;
+            color: #c7d2fe;
+        }
+        html.dark .file-item-active:hover { background-color: #1e1b4b; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100 h-screen flex overflow-hidden font-sans">
+
+    <aside class="w-80 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col h-full shadow-sm z-10">
+        <div class="p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+            <h1 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-3 flex items-center gap-2">
+                <span>📁</span> MD Viewer
+            </h1>
+            <p id="folderPath" class="text-xs text-slate-500 dark:text-slate-400 break-all leading-relaxed">Loading folder…</p>
+            <button
+                id="selectFolderButton"
+                type="button"
+                class="mt-3 w-full px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-400 text-sm font-medium shadow-sm"
+            >
+                Select Folder
+            </button>
+            <button
+                id="refreshButton"
+                type="button"
+                class="mt-2 w-full px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium hidden"
+            >
+                Refresh files
+            </button>
+        </div>
+
+        <div id="fileListContainer" class="flex-1 overflow-y-auto scroller p-2 space-y-1">
+            <div class="text-center text-slate-400 dark:text-slate-500 mt-10 text-sm italic">Loading markdown files…</div>
+        </div>
+
+        <div class="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs text-slate-400 dark:text-slate-500 text-center">
+            <span id="fileCount">0</span> files found
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col h-full relative bg-white dark:bg-slate-950">
+        <header class="h-14 border-b border-slate-200 dark:border-slate-800 flex items-center px-6 bg-white/80 dark:bg-slate-950/80 backdrop-blur sticky top-0 z-10 shadow-sm justify-between gap-4">
+            <div class="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate" id="currentFileTitle">No file selected</div>
+            <button
+                id="themeToggle"
+                type="button"
+                class="shrink-0 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800"
+                aria-label="Toggle dark mode"
+            >
+                Dark mode
+            </button>
+        </header>
+
+        <div class="flex-1 overflow-y-auto p-8 scroller" id="contentScroller">
+            <div class="markdown-body max-w-3xl mx-auto" id="contentContainer"></div>
+        </div>
+    </main>
+
+    <script>
+        const fileListContainer = document.getElementById("fileListContainer");
+        const contentContainer = document.getElementById("contentContainer");
+        const contentScroller = document.getElementById("contentScroller");
+        const currentFileTitle = document.getElementById("currentFileTitle");
+        const fileCountDisplay = document.getElementById("fileCount");
+        const folderPathDisplay = document.getElementById("folderPath");
+        const selectFolderButton = document.getElementById("selectFolderButton");
+        const refreshButton = document.getElementById("refreshButton");
+        const themeToggle = document.getElementById("themeToggle");
+
+        /** @type {{ name: string, path: string }[]} */
+        let markdownFiles = [];
+        /** @type {string | null} */
+        let activePath = null;
+        let pickingFolder = false;
+        let needsFolderSelected = true;
+
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+        });
+
+        function isDarkMode() {
+            return document.documentElement.classList.contains("dark");
+        }
+
+        function syncThemeToggle() {
+            themeToggle.textContent = isDarkMode() ? "Light mode" : "Dark mode";
+        }
+
+        function setDarkMode(enabled) {
+            document.documentElement.classList.toggle("dark", enabled);
+            localStorage.setItem("mdview-theme", enabled ? "dark" : "light");
+            syncThemeToggle();
+        }
+
+        themeToggle.addEventListener("click", () => {
+            setDarkMode(!isDarkMode());
+        });
+
+        syncThemeToggle();
+
+        selectFolderButton.addEventListener("click", () => {
+            void pickFolder();
+        });
+
+        refreshButton.addEventListener("click", () => {
+            void loadFileList(activePath);
+        });
+
+        function setPickingState(isPicking) {
+            pickingFolder = isPicking;
+            selectFolderButton.disabled = isPicking;
+            selectFolderButton.textContent = isPicking
+                ? "Waiting for folder…"
+                : needsFolderSelected
+                    ? "Select Folder"
+                    : "Change Folder";
+            selectFolderButton.classList.toggle("opacity-70", isPicking);
+        }
+
+        async function pickFolder() {
+            if (pickingFolder) {
+                return;
+            }
+
+            setPickingState(true);
+            try {
+                const response = await fetch("/api/pick-folder", { method: "POST" });
+                const payload = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(payload.error || "Could not open the folder picker.");
+                }
+
+                if (payload.cancelled) {
+                    return;
+                }
+
+                await loadFileList(null);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : "Unknown error";
+                showMessage("Could not select a folder", message);
+            } finally {
+                setPickingState(false);
+            }
+        }
+
+        /**
+         * @param {string | null} preferredPath
+         */
+        async function loadFileList(preferredPath) {
+            try {
+                const [statusResponse, filesResponse] = await Promise.all([
+                    fetch("/api/status"),
+                    fetch("/api/files"),
+                ]);
+
+                if (!statusResponse.ok || !filesResponse.ok) {
+                    throw new Error("Could not load files from the local server.");
+                }
+
+                const status = await statusResponse.json();
+                const payload = await filesResponse.json();
+                needsFolderSelected = Boolean(status.needsFolder);
+
+                refreshButton.classList.toggle("hidden", needsFolderSelected);
+                selectFolderButton.textContent = needsFolderSelected ? "Select Folder" : "Change Folder";
+                folderPathDisplay.textContent = needsFolderSelected
+                    ? "No folder selected"
+                    : status.directory;
+                markdownFiles = Array.isArray(payload.files) ? payload.files : [];
+                renderFileList();
+
+                if (needsFolderSelected) {
+                    activePath = null;
+                    currentFileTitle.textContent = "No file selected";
+                    fileListContainer.innerHTML = `
+                        <div class="text-center text-slate-400 dark:text-slate-500 mt-10 text-sm px-4">
+                            Choose a folder to see its markdown files.
+                        </div>
+                    `;
+                    showEmptyState(
+                        "Select a folder",
+                        "Pick a folder in the dialog. MD Viewer will remember it the next time you run <code>./mdview</code>."
+                    );
+                    return;
+                }
+
+                if (markdownFiles.length === 0) {
+                    activePath = null;
+                    currentFileTitle.textContent = "No file selected";
+                    showEmptyState(
+                        "No markdown files found",
+                        "This folder has no <code>.md</code> or <code>.markdown</code> files. Choose a different folder."
+                    );
+                    return;
+                }
+
+                const nextPath = markdownFiles.some((file) => file.path === preferredPath)
+                    ? preferredPath
+                    : markdownFiles[0].path;
+
+                await loadMarkdown(nextPath);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : "Unknown error";
+                folderPathDisplay.textContent = "Server not running";
+                refreshButton.classList.add("hidden");
+                fileListContainer.innerHTML = `
+                    <div class="text-center text-slate-500 dark:text-slate-400 mt-10 text-sm px-4">
+                        Start the viewer with <code>./mdview</code> instead of opening this file directly.
+                    </div>
+                `;
+                showEmptyState("Open via the command line", message);
+            }
+        }
+
+        /**
+         * @param {string} title
+         * @param {string} bodyHtml
+         */
+        function showEmptyState(title, bodyHtml) {
+            contentContainer.innerHTML = `
+                <div class="text-slate-400 dark:text-slate-500 text-center mt-20">
+                    <h2 class="text-2xl font-bold mb-4 text-slate-500 dark:text-slate-400">${title}</h2>
+                    <p>${bodyHtml}</p>
+                </div>
+            `;
+        }
+
+        /**
+         * @param {string} title
+         * @param {string} message
+         */
+        function showMessage(title, message) {
+            currentFileTitle.textContent = "No file selected";
+            showEmptyState(title, message);
+        }
+
+        function renderFileList() {
+            fileListContainer.innerHTML = "";
+            fileCountDisplay.textContent = String(markdownFiles.length);
+
+            markdownFiles.forEach((file) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.dataset.path = file.path;
+                button.className = file.path === activePath ? "file-item file-item-active" : "file-item";
+                button.addEventListener("click", () => {
+                    void loadMarkdown(file.path);
+                });
+
+                const icon = fileIcon(file.name);
+                const label = document.createElement("span");
+                label.className = "truncate font-medium";
+                label.textContent = file.path;
+
+                button.insertAdjacentHTML("afterbegin", `<span class="text-slate-400 dark:text-slate-500 shrink-0">${icon}</span>`);
+                button.appendChild(label);
+                fileListContainer.appendChild(button);
+            });
+        }
+
+        /**
+         * @param {string} name
+         */
+        function fileIcon(name) {
+            const lower = name.toLowerCase();
+            if (lower.includes("readme")) return "📖";
+            if (lower.includes("changelog")) return "📝";
+            return "📄";
+        }
+
+        /**
+         * @param {string} relativePath
+         */
+        async function loadMarkdown(relativePath) {
+            const response = await fetch(`/api/file?path=${encodeURIComponent(relativePath)}`);
+            const payload = await response.json();
+
+            if (!response.ok) {
+                currentFileTitle.textContent = relativePath;
+                contentContainer.textContent = payload.error || "Could not load file.";
+                return;
+            }
+
+            activePath = payload.path;
+            currentFileTitle.textContent = payload.path;
+            renderFileList();
+
+            contentContainer.innerHTML = marked.parse(payload.content);
+            contentScroller.scrollTo(0, 0);
+
+            contentContainer.querySelectorAll("pre code").forEach((block) => {
+                Prism.highlightElement(block);
+            });
+        }
+
+        void loadFileList(null);
+    </script>
+</body>
+</html>
