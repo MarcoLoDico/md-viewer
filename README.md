@@ -2,7 +2,8 @@
 
 A local Markdown viewer. Run it from the command line, pick a folder, and browse your `.md` files in the browser.
 
-![MD Viewer screenshot](screenshot.png)
+![MD Viewer screenshot](<img width="1494" height="736" alt="image" src="https://github.com/user-attachments/assets/32ec484a-b3d2-40a6-b389-f4e4622b3a56" />
+)
 
 ## Usage
 
