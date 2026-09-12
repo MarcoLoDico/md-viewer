@@ -77,6 +77,43 @@
         html.dark .markdown-body blockquote { border-left-color: #334155; color: #94a3b8; background: #0f172a; }
         html.dark .markdown-body a { color: #818cf8; }
 
+        #sidebar {
+            width: 20rem;
+            min-width: 20rem;
+            transition: width 180ms ease, min-width 180ms ease, transform 180ms ease, opacity 180ms ease;
+        }
+        body.sidebar-collapsed #sidebar {
+            width: 0;
+            min-width: 0;
+            transform: translateX(-100%);
+            opacity: 0;
+            pointer-events: none;
+            border-right-width: 0;
+        }
+        .folder-toggle {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.45rem 0.5rem;
+            border-radius: 0.375rem;
+            color: #475569;
+            font-size: 0.8125rem;
+            font-weight: 700;
+            text-align: left;
+        }
+        .folder-toggle:hover { background-color: #f1f5f9; }
+        html.dark .folder-toggle { color: #94a3b8; }
+        html.dark .folder-toggle:hover { background-color: #1e293b; }
+        .folder-chevron { transition: transform 120ms ease; }
+        .tree-folder.collapsed > .folder-toggle .folder-chevron { transform: rotate(-90deg); }
+        .tree-folder.collapsed > .tree-children { display: none; }
+        .tree-children {
+            margin-left: 0.8rem;
+            padding-left: 0.4rem;
+            border-left: 1px solid #e2e8f0;
+        }
+        html.dark .tree-children { border-left-color: #334155; }
         .file-item {
             width: 100%;
             display: flex;
@@ -106,13 +143,26 @@
             color: #c7d2fe;
         }
         html.dark .file-item-active:hover { background-color: #1e1b4b; }
+
+        @media (max-width: 800px) {
+            #sidebar {
+                position: absolute;
+                inset: 3.5rem auto 0 0;
+                height: auto;
+                z-index: 30;
+                box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.2);
+            }
+            #contentScroller { padding: 1.25rem; }
+            .markdown-body h1 { font-size: 2rem; }
+            .markdown-body h2 { font-size: 1.5rem; }
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100 h-screen flex overflow-hidden font-sans">
 
-    <aside class="w-80 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col h-full shadow-sm z-10">
-        <div class="p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
-            <h1 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-3 flex items-center gap-2">
+    <aside id="sidebar" class="bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col h-full shadow-sm z-10 overflow-hidden">
+        <div class="min-w-[20rem] p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+            <h1 class="mb-3 text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
                 <span>📁</span> MD Viewer
             </h1>
             <p id="folderPath" class="text-xs text-slate-500 dark:text-slate-400 break-all leading-relaxed">Loading folder…</p>
@@ -142,8 +192,11 @@
     </aside>
 
     <main class="flex-1 flex flex-col h-full relative bg-white dark:bg-slate-950">
-        <header class="h-14 border-b border-slate-200 dark:border-slate-800 flex items-center px-6 bg-white/80 dark:bg-slate-950/80 backdrop-blur sticky top-0 z-10 shadow-sm justify-between gap-4">
-            <div class="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate" id="currentFileTitle">No file selected</div>
+        <header class="h-14 border-b border-slate-200 dark:border-slate-800 flex items-center px-4 sm:px-6 bg-white/80 dark:bg-slate-950/80 backdrop-blur sticky top-0 z-10 shadow-sm justify-between gap-4">
+            <div class="flex items-center gap-3 min-w-0">
+                <button id="sidebarToggle" type="button" class="shrink-0 p-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Toggle sidebar" aria-expanded="true" title="Toggle sidebar">☰</button>
+                <div class="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate" id="currentFileTitle">No file selected</div>
+            </div>
             <button
                 id="themeToggle"
                 type="button"
@@ -169,6 +222,7 @@
         const selectFolderButton = document.getElementById("selectFolderButton");
         const refreshButton = document.getElementById("refreshButton");
         const themeToggle = document.getElementById("themeToggle");
+        const sidebarToggle = document.getElementById("sidebarToggle");
 
         /** @type {{ name: string, path: string }[]} */
         let markdownFiles = [];
@@ -176,6 +230,9 @@
         let activePath = null;
         let pickingFolder = false;
         let needsFolderSelected = true;
+        const collapsedDirectories = new Set(
+            JSON.parse(localStorage.getItem("mdview-collapsed-directories") || "[]")
+        );
 
         marked.setOptions({
             breaks: true,
@@ -201,6 +258,22 @@
         });
 
         syncThemeToggle();
+
+        function setSidebarCollapsed(collapsed) {
+            document.body.classList.toggle("sidebar-collapsed", collapsed);
+            sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+            localStorage.setItem("mdview-sidebar-collapsed", String(collapsed));
+        }
+
+        const savedSidebarState = localStorage.getItem("mdview-sidebar-collapsed");
+        setSidebarCollapsed(
+            savedSidebarState === null
+                ? window.matchMedia("(max-width: 800px)").matches
+                : savedSidebarState === "true"
+        );
+        sidebarToggle.addEventListener("click", () => {
+            setSidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"));
+        });
 
         selectFolderButton.addEventListener("click", () => {
             void pickFolder();
@@ -343,24 +416,100 @@
             fileListContainer.innerHTML = "";
             fileCountDisplay.textContent = String(markdownFiles.length);
 
+            const root = { directories: new Map(), files: [] };
             markdownFiles.forEach((file) => {
-                const button = document.createElement("button");
-                button.type = "button";
-                button.dataset.path = file.path;
-                button.className = file.path === activePath ? "file-item file-item-active" : "file-item";
-                button.addEventListener("click", () => {
-                    void loadMarkdown(file.path);
+                const parts = file.path.split("/");
+                let node = root;
+                let directoryPath = "";
+                parts.slice(0, -1).forEach((part) => {
+                    directoryPath = directoryPath ? `${directoryPath}/${part}` : part;
+                    if (!node.directories.has(part)) {
+                        node.directories.set(part, {
+                            name: part,
+                            path: directoryPath,
+                            directories: new Map(),
+                            files: [],
+                        });
+                    }
+                    node = node.directories.get(part);
+                });
+                node.files.push(file);
+            });
+
+            renderTreeContents(root, fileListContainer);
+        }
+
+        function renderTreeContents(node, container) {
+            const directories = [...node.directories.values()].sort((a, b) =>
+                a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+            );
+            directories.forEach((directory) => {
+                const wrapper = document.createElement("div");
+                wrapper.className = "tree-folder";
+                wrapper.classList.toggle("collapsed", collapsedDirectories.has(directory.path));
+
+                const toggle = document.createElement("button");
+                toggle.type = "button";
+                toggle.className = "folder-toggle";
+                toggle.title = directory.path;
+                toggle.setAttribute("aria-expanded", String(!collapsedDirectories.has(directory.path)));
+
+                const chevron = document.createElement("span");
+                chevron.className = "folder-chevron shrink-0 text-slate-400";
+                chevron.textContent = "▾";
+                const icon = document.createElement("span");
+                icon.className = "shrink-0";
+                icon.textContent = "📁";
+                const label = document.createElement("span");
+                label.className = "truncate";
+                label.textContent = directory.name;
+                toggle.append(chevron, icon, label);
+
+                const children = document.createElement("div");
+                children.className = "tree-children";
+                renderTreeContents(directory, children);
+
+                toggle.addEventListener("click", () => {
+                    const collapsed = wrapper.classList.toggle("collapsed");
+                    toggle.setAttribute("aria-expanded", String(!collapsed));
+                    if (collapsed) collapsedDirectories.add(directory.path);
+                    else collapsedDirectories.delete(directory.path);
+                    localStorage.setItem(
+                        "mdview-collapsed-directories",
+                        JSON.stringify([...collapsedDirectories])
+                    );
                 });
 
-                const icon = fileIcon(file.name);
-                const label = document.createElement("span");
-                label.className = "truncate font-medium";
-                label.textContent = file.path;
-
-                button.insertAdjacentHTML("afterbegin", `<span class="text-slate-400 dark:text-slate-500 shrink-0">${icon}</span>`);
-                button.appendChild(label);
-                fileListContainer.appendChild(button);
+                wrapper.append(toggle, children);
+                container.appendChild(wrapper);
             });
+
+            [...node.files]
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+                .forEach((file) => container.appendChild(createFileButton(file)));
+        }
+
+        function createFileButton(file) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.dataset.path = file.path;
+            button.title = file.path;
+            button.className = file.path === activePath ? "file-item file-item-active" : "file-item";
+            button.addEventListener("click", () => {
+                void loadMarkdown(file.path);
+                if (window.matchMedia("(max-width: 800px)").matches) {
+                    setSidebarCollapsed(true);
+                }
+            });
+
+            const icon = document.createElement("span");
+            icon.className = "text-slate-400 dark:text-slate-500 shrink-0";
+            icon.textContent = fileIcon(file.name);
+            const label = document.createElement("span");
+            label.className = "truncate font-medium";
+            label.textContent = file.name;
+            button.append(icon, label);
+            return button;
         }
 
         /**

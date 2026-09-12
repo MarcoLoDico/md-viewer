@@ -19,7 +19,10 @@ Press `Ctrl+C` in the terminal to stop it.
 
 ## Features
 
-- Lists every `.md` and `.markdown` file in the folder (including subfolders)
+- Shows `.md` and `.markdown` files in a collapsible directory tree
+- Remembers collapsed directories between sessions
+- Collapsible sidebar for comfortable reading in narrow and split-screen windows
+- Automatically starts with the sidebar collapsed on narrow screens
 - Renders GitHub-flavored Markdown with syntax highlighting
 - Dark and light mode
 - Remembers the last folder in `~/.mdview.json`
