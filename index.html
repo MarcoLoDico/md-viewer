@@ -36,9 +36,18 @@
         html.dark .scroller::-webkit-scrollbar-thumb { background: #334155; }
         html.dark .scroller::-webkit-scrollbar-thumb:hover { background: #475569; }
 
+        .markdown-body h1,
+        .markdown-body h2,
+        .markdown-body h3,
+        .markdown-body h4,
+        .markdown-body h5,
+        .markdown-body h6 { scroll-margin-top: 1rem; }
         .markdown-body h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 1rem; color: #1e293b; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem; }
         .markdown-body h2 { font-size: 2rem; font-weight: 600; margin-top: 2rem; margin-bottom: 1rem; color: #334155; }
         .markdown-body h3 { font-size: 1.5rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; color: #334155; }
+        .markdown-body h4 { font-size: 1.25rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #334155; }
+        .markdown-body h5,
+        .markdown-body h6 { font-size: 1rem; font-weight: 700; margin-top: 1rem; margin-bottom: 0.5rem; color: #334155; }
         .markdown-body p { line-height: 1.75; color: #475569; margin-bottom: 1.25rem; }
         .markdown-body :not(pre) > code { background-color: #f1f5f9; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; color: #e11d48; }
         .markdown-body pre {
@@ -65,7 +74,10 @@
 
         html.dark .markdown-body h1 { color: #f1f5f9; border-bottom-color: #1e293b; }
         html.dark .markdown-body h2,
-        html.dark .markdown-body h3 { color: #e2e8f0; }
+        html.dark .markdown-body h3,
+        html.dark .markdown-body h4,
+        html.dark .markdown-body h5,
+        html.dark .markdown-body h6 { color: #e2e8f0; }
         html.dark .markdown-body p,
         html.dark .markdown-body ul,
         html.dark .markdown-body ol { color: #cbd5e1; }
@@ -144,6 +156,50 @@
         }
         html.dark .file-item-active:hover { background-color: #1e1b4b; }
 
+        #tocSidebar {
+            width: 16rem;
+            min-width: 16rem;
+        }
+        .toc-link {
+            display: block;
+            border-left: 2px solid transparent;
+            padding: 0.35rem 0.5rem;
+            border-radius: 0 0.375rem 0.375rem 0;
+            color: #64748b;
+            line-height: 1.35;
+            transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+        }
+        .toc-link:hover {
+            background-color: #f1f5f9;
+            color: #334155;
+        }
+        .toc-link-active {
+            border-left-color: #4f46e5;
+            background-color: #eef2ff;
+            color: #4338ca;
+            font-weight: 700;
+        }
+        .toc-level-1 { font-size: 0.875rem; font-weight: 700; }
+        .toc-level-2 { font-size: 0.8125rem; padding-left: 1rem; }
+        .toc-level-3 { font-size: 0.8125rem; padding-left: 1.5rem; }
+        .toc-level-4,
+        .toc-level-5,
+        .toc-level-6 { font-size: 0.75rem; padding-left: 2rem; }
+        html.dark .toc-link { color: #94a3b8; }
+        html.dark .toc-link:hover {
+            background-color: #1e293b;
+            color: #e2e8f0;
+        }
+        html.dark .toc-link-active {
+            border-left-color: #818cf8;
+            background-color: #1e1b4b;
+            color: #c7d2fe;
+        }
+
+        @media (max-width: 1100px) {
+            #tocSidebar { display: none; }
+        }
+
         @media (max-width: 800px) {
             #sidebar {
                 position: absolute;
@@ -207,8 +263,19 @@
             </button>
         </header>
 
-        <div class="flex-1 overflow-y-auto p-8 scroller" id="contentScroller">
-            <div class="markdown-body max-w-3xl mx-auto" id="contentContainer"></div>
+        <div id="documentArea" class="flex-1 flex min-h-0">
+            <div class="flex-1 overflow-y-auto p-8 scroller" id="contentScroller">
+                <div class="markdown-body max-w-3xl mx-auto" id="contentContainer"></div>
+            </div>
+
+            <aside id="tocSidebar" class="border-l border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60 overflow-y-auto scroller">
+                <div class="p-4 sticky top-0">
+                    <h2 class="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-3">On this page</h2>
+                    <nav id="tocList" class="space-y-1 text-sm">
+                        <div class="text-xs text-slate-400 dark:text-slate-500 italic leading-relaxed">Open a markdown file to see sections.</div>
+                    </nav>
+                </div>
+            </aside>
         </div>
     </main>
 
@@ -216,6 +283,7 @@
         const fileListContainer = document.getElementById("fileListContainer");
         const contentContainer = document.getElementById("contentContainer");
         const contentScroller = document.getElementById("contentScroller");
+        const tocList = document.getElementById("tocList");
         const currentFileTitle = document.getElementById("currentFileTitle");
         const fileCountDisplay = document.getElementById("fileCount");
         const folderPathDisplay = document.getElementById("folderPath");
@@ -230,6 +298,8 @@
         let activePath = null;
         let pickingFolder = false;
         let needsFolderSelected = true;
+        let currentTocHeadings = [];
+        let tocScrollTicking = false;
         const collapsedDirectories = new Set(
             JSON.parse(localStorage.getItem("mdview-collapsed-directories") || "[]")
         );
@@ -395,6 +465,7 @@
          * @param {string} bodyHtml
          */
         function showEmptyState(title, bodyHtml) {
+            clearTableOfContents();
             contentContainer.innerHTML = `
                 <div class="text-slate-400 dark:text-slate-500 text-center mt-20">
                     <h2 class="text-2xl font-bold mb-4 text-slate-500 dark:text-slate-400">${title}</h2>
@@ -532,6 +603,7 @@
             if (!response.ok) {
                 currentFileTitle.textContent = relativePath;
                 contentContainer.textContent = payload.error || "Could not load file.";
+                clearTableOfContents();
                 return;
             }
 
@@ -540,12 +612,107 @@
             renderFileList();
 
             contentContainer.innerHTML = marked.parse(payload.content);
-            contentScroller.scrollTo(0, 0);
 
             contentContainer.querySelectorAll("pre code").forEach((block) => {
                 Prism.highlightElement(block);
             });
+
+            buildTableOfContents();
+            contentScroller.scrollTo(0, 0);
+            updateActiveTocLink();
         }
+
+        function slugifyHeading(text) {
+            const slug = text
+                .toLowerCase()
+                .normalize("NFKD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-+|-+$/g, "");
+            return slug || "section";
+        }
+
+        function clearTableOfContents() {
+            currentTocHeadings = [];
+            tocList.innerHTML = `
+                <div class="text-xs text-slate-400 dark:text-slate-500 italic leading-relaxed">
+                    Open a markdown file to see sections.
+                </div>
+            `;
+        }
+
+        function buildTableOfContents() {
+            currentTocHeadings = [...contentContainer.querySelectorAll("h1, h2, h3, h4, h5, h6")];
+            const usedSlugs = new Map();
+
+            currentTocHeadings.forEach((heading) => {
+                const baseSlug = slugifyHeading(heading.textContent || "section");
+                const count = usedSlugs.get(baseSlug) || 0;
+                usedSlugs.set(baseSlug, count + 1);
+                heading.id = count === 0 ? baseSlug : `${baseSlug}-${count + 1}`;
+            });
+
+            if (currentTocHeadings.length === 0) {
+                tocList.innerHTML = `
+                    <div class="text-xs text-slate-400 dark:text-slate-500 italic leading-relaxed">
+                        This document has no headers.
+                    </div>
+                `;
+                return;
+            }
+
+            tocList.innerHTML = "";
+            currentTocHeadings.forEach((heading) => {
+                const level = Number(heading.tagName.slice(1));
+                const link = document.createElement("a");
+                link.href = `#${heading.id}`;
+                link.dataset.target = heading.id;
+                link.className = `toc-link toc-level-${level}`;
+                link.textContent = heading.textContent || "Untitled section";
+                link.addEventListener("click", (event) => {
+                    event.preventDefault();
+                    heading.scrollIntoView({ behavior: "smooth", block: "start" });
+                    history.replaceState(null, "", `#${heading.id}`);
+                    updateActiveTocLink(heading.id);
+                });
+                tocList.appendChild(link);
+            });
+        }
+
+        function updateActiveTocLink(forcedId = null) {
+            if (currentTocHeadings.length === 0) {
+                return;
+            }
+
+            let activeId = forcedId || currentTocHeadings[0].id;
+            if (!forcedId) {
+                const scrollerTop = contentScroller.getBoundingClientRect().top;
+                for (const heading of currentTocHeadings) {
+                    const distanceFromTop = heading.getBoundingClientRect().top - scrollerTop;
+                    if (distanceFromTop <= 80) {
+                        activeId = heading.id;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            tocList.querySelectorAll(".toc-link").forEach((link) => {
+                link.classList.toggle("toc-link-active", link.dataset.target === activeId);
+            });
+        }
+
+        contentScroller.addEventListener("scroll", () => {
+            if (tocScrollTicking) {
+                return;
+            }
+
+            tocScrollTicking = true;
+            requestAnimationFrame(() => {
+                updateActiveTocLink();
+                tocScrollTicking = false;
+            });
+        });
 
         void loadFileList(null);
     </script>
