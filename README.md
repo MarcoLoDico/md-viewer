@@ -24,5 +24,23 @@ Press `Ctrl+C` in the terminal to stop it.
 - Collapsible sidebar for comfortable reading in narrow and split-screen windows
 - Automatically starts with the sidebar collapsed on narrow screens
 - Renders GitHub-flavored Markdown with syntax highlighting
+- Renders fenced Mermaid diagrams, with matching dark and light themes
+- Keeps diagram source visible if Mermaid cannot load or a diagram has invalid syntax
 - Dark and light mode
 - Remembers the last folder in `~/.mdview.json`
+
+## Mermaid diagrams
+
+Use a fenced code block with `mermaid` as its language. For example:
+
+````markdown
+```mermaid
+flowchart LR
+    A[Start] --> B[Read document]
+    B --> C[Finish]
+```
+````
+
+The viewer renders the block as a diagram. Flowcharts, sequence diagrams, and other Mermaid diagram types are supported. Switching the viewer theme re-renders diagrams for that theme.
+
+Mermaid loads from a CDN when a document contains a diagram, so an internet connection is required. Ordinary code blocks keep their existing syntax highlighting.

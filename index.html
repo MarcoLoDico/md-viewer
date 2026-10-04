@@ -67,6 +67,37 @@
         .markdown-body pre code .token {
             background: transparent !important;
         }
+        .mermaid-diagram {
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #fff;
+            overflow-x: auto;
+        }
+        .mermaid-diagram > svg {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            margin: 0 auto;
+        }
+        .mermaid-diagram .mermaid-error {
+            color: #b91c1c;
+            margin-bottom: 0.75rem;
+        }
+        .mermaid-diagram pre { margin-bottom: 0; }
+        .mermaid-stage {
+            position: fixed;
+            left: -10000px;
+            top: 0;
+            width: 768px;
+            pointer-events: none;
+        }
+        html.dark .mermaid-diagram {
+            border-color: #334155;
+            background: #0f172a;
+        }
+        html.dark .mermaid-diagram .mermaid-error { color: #fca5a5; }
         .markdown-body ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 1.25rem; color: #475569; }
         .markdown-body ol { list-style-type: decimal; padding-left: 1.5rem; margin-bottom: 1.25rem; color: #475569; }
         .markdown-body blockquote { border-left: 4px solid #cbd5e1; padding: 0.5rem 1rem; color: #64748b; font-style: italic; margin-bottom: 1.25rem; background: #f8fafc; }
@@ -300,6 +331,12 @@
         let needsFolderSelected = true;
         let currentTocHeadings = [];
         let tocScrollTicking = false;
+        let markdownLoadVersion = 0;
+        let diagramRenderVersion = 0;
+        let mermaidDiagramId = 0;
+        let mermaidModulePromise = null;
+        let diagramRenderQueue = Promise.resolve();
+        const diagramSources = new WeakMap();
         const collapsedDirectories = new Set(
             JSON.parse(localStorage.getItem("mdview-collapsed-directories") || "[]")
         );
@@ -321,6 +358,7 @@
             document.documentElement.classList.toggle("dark", enabled);
             localStorage.setItem("mdview-theme", enabled ? "dark" : "light");
             syncThemeToggle();
+            void renderMermaidDiagrams();
         }
 
         themeToggle.addEventListener("click", () => {
@@ -597,8 +635,10 @@
          * @param {string} relativePath
          */
         async function loadMarkdown(relativePath) {
+            const loadVersion = ++markdownLoadVersion;
             const response = await fetch(`/api/file?path=${encodeURIComponent(relativePath)}`);
             const payload = await response.json();
+            if (loadVersion !== markdownLoadVersion) return;
 
             if (!response.ok) {
                 currentFileTitle.textContent = relativePath;
@@ -614,12 +654,101 @@
             contentContainer.innerHTML = marked.parse(payload.content);
 
             contentContainer.querySelectorAll("pre code").forEach((block) => {
-                Prism.highlightElement(block);
+                if (block.classList.contains("language-mermaid")) {
+                    const diagram = document.createElement("div");
+                    diagram.className = "mermaid-diagram";
+                    diagram.textContent = "Rendering diagram…";
+                    diagramSources.set(diagram, block.textContent);
+                    block.parentElement.replaceWith(diagram);
+                } else {
+                    Prism.highlightElement(block);
+                }
             });
 
             buildTableOfContents();
             contentScroller.scrollTo(0, 0);
             updateActiveTocLink();
+            void renderMermaidDiagrams();
+        }
+
+        function loadMermaid() {
+            if (!mermaidModulePromise) {
+                mermaidModulePromise = import(
+                    "https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.esm.min.mjs"
+                ).then((module) => module.default).catch((error) => {
+                    mermaidModulePromise = null;
+                    throw error;
+                });
+            }
+            return mermaidModulePromise;
+        }
+
+        function showDiagramSource(diagram, message) {
+            const error = document.createElement("p");
+            error.className = "mermaid-error";
+            error.textContent = message;
+            const pre = document.createElement("pre");
+            const code = document.createElement("code");
+            code.textContent = diagramSources.get(diagram);
+            pre.appendChild(code);
+            diagram.replaceChildren(error, pre);
+        }
+
+        function renderMermaidDiagrams() {
+            const version = ++diagramRenderVersion;
+            const diagrams = [...contentContainer.querySelectorAll(".mermaid-diagram")];
+            const dark = isDarkMode();
+
+            const render = async () => {
+                if (!diagrams.length || version !== diagramRenderVersion) return;
+                let mermaid;
+                try {
+                    mermaid = await loadMermaid();
+                    await document.fonts.ready;
+                } catch (error) {
+                    if (version !== diagramRenderVersion) return;
+                    diagrams.filter((diagram) => diagram.isConnected).forEach((diagram) => {
+                        showDiagramSource(diagram, "Mermaid could not load. Check your connection and refresh.");
+                    });
+                    return;
+                }
+                if (version !== diagramRenderVersion) return;
+
+                mermaid.initialize({
+                    startOnLoad: false,
+                    securityLevel: "strict",
+                    suppressErrorRendering: true,
+                    theme: dark ? "dark" : "default",
+                    fontFamily: "system-ui, sans-serif",
+                });
+
+                for (const diagram of diagrams) {
+                    if (version !== diagramRenderVersion || !diagram.isConnected) return;
+                    const stage = document.createElement("div");
+                    stage.className = "mermaid-stage";
+                    document.body.appendChild(stage);
+                    diagram.setAttribute("aria-busy", "true");
+                    try {
+                        const id = `mdview-diagram-${++mermaidDiagramId}`;
+                        const { svg } = await mermaid.render(id, diagramSources.get(diagram), stage);
+                        if (version === diagramRenderVersion && diagram.isConnected) {
+                            diagram.innerHTML = svg;
+                        }
+                    } catch (error) {
+                        if (version === diagramRenderVersion && diagram.isConnected) {
+                            showDiagramSource(diagram, "Could not render this Mermaid diagram. Check its syntax.");
+                        }
+                    } finally {
+                        stage.remove();
+                        diagram.removeAttribute("aria-busy");
+                    }
+                }
+                if (version === diagramRenderVersion) updateActiveTocLink();
+            };
+
+            // Serialize renders so theme changes cannot reconfigure a diagram in progress.
+            diagramRenderQueue = diagramRenderQueue.then(render, render);
+            return diagramRenderQueue;
         }
 
         function slugifyHeading(text) {
