@@ -104,6 +104,35 @@ def resolve_markdown_path(root: Path, relative_path: str) -> Path:
     return candidate
 
 
+IMAGE_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".svg": "image/svg+xml",
+}
+
+
+def resolve_asset_path(root: Path, relative_path: str) -> Path:
+    """Resolve an image referenced by a markdown file, refusing anything outside the folder."""
+    if not relative_path:
+        raise ValueError("Missing path")
+    candidate = (root / Path(relative_path)).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError as error:
+        raise ValueError("Path is outside the selected folder") from error
+    if candidate.suffix.lower() not in IMAGE_TYPES:
+        raise ValueError("Unsupported file type")
+    if not candidate.is_file():
+        raise FileNotFoundError(relative_path)
+    return candidate
+
+
 def pick_folder_native() -> Path | None:
     if sys.platform == "darwin":
         result = subprocess.run(
@@ -211,6 +240,22 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(error)}, status=404)
                 return
             self._send_json({"path": relative, "name": path.name, "content": content})
+            return
+
+        if route == "/api/asset":
+            if root is None:
+                self.send_error(404, "No folder selected")
+                return
+            relative = parse_qs(parsed.query).get("path", [""])[0]
+            try:
+                path = resolve_asset_path(root, relative)
+            except ValueError as error:
+                self.send_error(400, str(error))
+                return
+            except FileNotFoundError:
+                self.send_error(404, "Not found")
+                return
+            self._send_file(path, IMAGE_TYPES[path.suffix.lower()], cache_control="no-cache")
             return
 
         if route in {"/", "/index.html"}:

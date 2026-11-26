@@ -24,6 +24,7 @@ Press `Ctrl+C` in the terminal to stop it.
 - Collapsible sidebar for comfortable reading in narrow and split-screen windows
 - Automatically starts with the sidebar collapsed on narrow screens
 - Renders GitHub-flavored Markdown with syntax highlighting
+- Shows images referenced with relative paths (for example `![plot](figures/plot.png)`), resolved from the Markdown file's folder and limited to the opened folder
 - Renders fenced Mermaid diagrams, with matching dark and light themes
 - Keeps diagram source visible if Mermaid cannot load or a diagram has invalid syntax
 - Dark and light mode
